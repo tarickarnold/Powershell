@@ -1,7 +1,7 @@
 # Function to get the latest Python version number from the official Python website
 Function Get-LatestPythonVersion {
     param(
-        [str] $downloadPath
+        [string] $downloadPath
     )
     Try {
         # Step 1: Download the page source
@@ -23,11 +23,10 @@ Function Get-LatestPythonVersion {
 
 }
 
-
 Function Start-PythonInstaller {
     param(
-        [str] $downloadPath,
-        [str] $pythonPath
+        [string] $downloadPath,
+        [string] $pythonPath
     )
 
     # Define the Python installation options (quiet mode, add to PATH, precompile standard library)
@@ -57,6 +56,25 @@ Function Start-PythonInstaller {
     
 }
 
+FunctioN Set-EnvironmentVariable {
+    param(
+        [string] $pythonPath 
+    )
+
+    # Add Python to PATH environment variables (if not already added)
+    $envPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if ($envPath -notlike "*$pythonPath*") {
+        [System.Environment]::SetEnvironmentVariable("Path", "$envPath;$pythonPath", "User")
+
+        # Verify Python installation 
+        Write-Host "Python path added to user environment variables." -ForegroundColor Blue
+        Start-Process -FilePath "python" -ArgumentList "--version" -NoNewWindow -Wait
+    }
+    else {
+        Write-Host "Python path already exists in user environment variables." -ForegroundColor Green
+    }
+}
+
 #--------------------------------SCRIPT--------------------------------------
 
 $pythonInstallerPath = "$env:TEMP\python-installer.exe"
@@ -65,25 +83,14 @@ $pythonPath = (Get-Command python).Source
 # Check if Python is installed
 if (Get-Command python -ErrorAction SilentlyContinue) {
     $version = python --version
-    Write-Output "Python is installed: $version" -ForegroundColor Green
+    Write-Host "Python is installed: $version" -ForegroundColor Green
+    Set-EnvironmentVariable -pythonPath $pythonPath 
 }
 else {
-    Write-Output "Python is not installed or not in PATH." -ForegroundColor Orange
+    Write-Host "Python is not installed or not in PATH." -ForegroundColor Yellow
     
     # Get the latest Python version
     Get-LatestPythonVersion -downloadPath $pythonInstallerPath
     Start-PythonInstaller -downloadPath $pythonInstallerPath -pythonPath $pythonPath
-}
-
-# Add Python to PATH environment variables (if not already added)
-$envPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
-if ($envPath -notlike "*$pythonPath*") {
-    [System.Environment]::SetEnvironmentVariable("Path", "$envPath;$pythonPath", "User")
-
-    # Verify Python installation 
-    Write-Host "Python path added to user environment variables." -ForegroundColor Blue
-    Start-Process -FilePath "python" -ArgumentList "--version" -NoNewWindow -Wait
-}
-else {
-    Write-Host "Python path already exists in user environment variables." -ForegroundColor Green
+    Set-EnvironmentVariable -pythonPath $pythonPath
 }
