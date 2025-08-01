@@ -31,11 +31,9 @@ function Set-Scaffold {
     $businessEmail = ""
 
     if ($folderPath.Contains("Dev")) {
-        # Dev Email
         $opsEmail = ""
     }
     else {
-        # Prod Email
         $opsEmail = ""
     }
 
