@@ -1,6 +1,14 @@
 # Set your log file path (change as needed)
 $Global:LogFilePath = "C:<project_path_here>\Logs\<progject_name_here>.log.jsonl"
 
+# At top of Write-LogJson, after parameters:
+$minLevelName = if ($Global:LogLevelThreshold) { $Global:LogLevelThreshold } else { 'DEBUG' }
+$order = $Global:LogLevelOrder
+
+if ($order[$Level] -lt $order[$minLevelName]) {
+    return  # Do not log this entry
+}
+
 function Write-LogJson {
     [CmdletBinding()]
     param(
