@@ -1,0 +1,257 @@
+You can build a simple, reusable JSON logger in PowerShell that: 
+
+Writes each log entry as a JSON object on its own line (JSONL style). 
+
+Captures timestamp, log level, message, exception/error, and extra data. 
+
+Is easy to call from any script. 
+
+Below is a complete pattern you can copy, plus guidance on usage. 
+
+ 
+
+1. Core design 
+
+We’ll implement: 
+
+A global or script-level log file path. 
+
+A function Write-LogJson that: 
+
+Ensures the log directory exists. 
+
+Builds a PowerShell object with all relevant fields. 
+
+Converts that object to JSON. 
+
+Appends it to the log file as a single line. 
+
+ 
+
+2. Example: JSON log entry format 
+
+Each log line will look like this in the file: 
+
+{"timestamp":"2026-01-29T19:05:01.2345678Z","level":"INFO","message":"Starting weather check","data":{"location":"Houston,TX"}} 
+{"timestamp":"2026-01-29T19:05:02.1203456Z","level":"ERROR","message":"Failed to call weather API","exception":"The remote server returned an error: (500) Internal Server Error."} 
+
+This is easy to ingest with log tools, or to re-load in PowerShell with Get-Content | ConvertFrom-Json. 
+
+ 
+
+3. Implementing the logger 
+
+Put this near the top of your script or in a module: 
+
+# Set your log file path (change as needed) 
+$Global:LogFilePath = "C:\Logs\weather.log.jsonl" 
+ 
+function Write-LogJson { 
+    [CmdletBinding()] 
+    param( 
+        [Parameter(Mandatory)] 
+        [ValidateSet('DEBUG','INFO','WARN','ERROR','FATAL')] 
+        [string]$Level, 
+ 
+        [Parameter(Mandatory)] 
+        [string]$Message, 
+ 
+        # Optional: structured data to include (hash table or object) 
+        [Parameter()] 
+        [object]$Data, 
+ 
+        # Optional: pass an Exception or ErrorRecord 
+        [Parameter()] 
+        [object]$ErrorObject, 
+ 
+        # Optional: override the log file path 
+        [Parameter()] 
+        [string]$LogFilePath = $Global:LogFilePath 
+    ) 
+ 
+    if (-not $LogFilePath) { 
+        throw "Log file path is not set. Set `$Global:LogFilePath or pass -LogFilePath." 
+    } 
+ 
+    # Ensure log directory exists 
+    $logDir = Split-Path -Path $LogFilePath -Parent 
+    if ($logDir -and -not (Test-Path $logDir)) { 
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null 
+    } 
+ 
+    # Normalize error info (if provided) 
+    $exceptionMessage = $null 
+    $exceptionType    = $null 
+    $stackTrace       = $null 
+ 
+    if ($ErrorObject) { 
+        if ($ErrorObject -is [System.Management.Automation.ErrorRecord]) { 
+            $exceptionMessage = $ErrorObject.Exception.Message 
+            $exceptionType    = $ErrorObject.Exception.GetType().FullName 
+            $stackTrace       = $ErrorObject.ScriptStackTrace 
+        } 
+        elseif ($ErrorObject -is [System.Exception]) { 
+            $exceptionMessage = $ErrorObject.Message 
+            $exceptionType    = $ErrorObject.GetType().FullName 
+            $stackTrace       = $ErrorObject.StackTrace 
+        } 
+        else { 
+            $exceptionMessage = [string]$ErrorObject 
+        } 
+    } 
+ 
+    # Build log entry as a PSCustomObject 
+    $logEntry = [PSCustomObject]@{ 
+        timestamp = (Get-Date).ToUniversalTime().ToString("o")  # ISO 8601 in UTC 
+        level     = $Level 
+        message   = $Message 
+    } 
+ 
+    if ($Data) { 
+        # Keep structured data as-is; ConvertTo-Json will handle nesting 
+        $logEntry | Add-Member -NotePropertyName 'data' -NotePropertyValue $Data 
+    } 
+ 
+    if ($exceptionMessage) { 
+        $errorInfo = [PSCustomObject]@{ 
+            message = $exceptionMessage 
+        } 
+        if ($exceptionType)  { $errorInfo | Add-Member type       $exceptionType } 
+        if ($stackTrace)     { $errorInfo | Add-Member stackTrace $stackTrace } 
+ 
+        $logEntry | Add-Member -NotePropertyName 'exception' -NotePropertyValue $errorInfo 
+    } 
+ 
+    # Convert to compact single-line JSON 
+    $json = $logEntry | ConvertTo-Json -Depth 10 -Compress 
+ 
+    # Append to file 
+    Add-Content -Path $LogFilePath -Value $json 
+} 
+
+Key points 
+
+Timestamp: ISO 8601 ("o" format) in UTC – standard for logs. 
+
+Level: restricted to common levels: DEBUG, INFO, WARN, ERROR, FATAL. 
+
+Data: arbitrary structured data (hash/PSObject) for context. 
+
+ErrorObject: handle $_, $Error[0], or any Exception. 
+
+ 
+
+4. Using the logger 
+
+4.1 Info / debug message 
+
+Write-LogJson -Level INFO -Message "Starting weather check" -Data @{ 
+    location = "Houston,TX" 
+    units    = "imperial" 
+} 
+
+4.2 Warning 
+
+Write-LogJson -Level WARN -Message "No location provided, using default" -Data @{ 
+    defaultLocation = "Houston,TX" 
+} 
+
+4.3 Error with try/catch 
+
+try { 
+    $response = Invoke-RestMethod -Uri "https://wttr.in/Houston,TX?0" -ErrorAction Stop 
+} 
+catch { 
+    Write-LogJson -Level ERROR -Message "Failed to retrieve weather" -ErrorObject $_ -Data @{ 
+        uri = "https://wttr.in/Houston,TX?0" 
+    } 
+    throw  # rethrow if you want the script to fail 
+} 
+
+4.4 Fatal error 
+
+Write-LogJson -Level FATAL -Message "Unrecoverable configuration error" -Data @{ 
+    configPath = "C:\Scripts\config.json" 
+} 
+exit 1 
+
+ 
+
+5. Reading and analyzing the log 
+
+5.1 Load back in PowerShell 
+
+$entries = Get-Content -Path $Global:LogFilePath | ForEach-Object { 
+    $_ | ConvertFrom-Json 
+} 
+ 
+# Example: list errors only 
+$entries | Where-Object { $_.level -in @('ERROR','FATAL') } | 
+    Select-Object timestamp, level, message, exception 
+
+5.2 Filter by date or message 
+
+$since = (Get-Date).AddHours(-1) 
+ 
+$recentErrors = $entries | 
+    Where-Object { 
+        ([DateTime]$_.timestamp) -ge $since -and $_.level -eq 'ERROR' 
+    } 
+
+ 
+
+6. Optional: log level threshold 
+
+If you want to suppress DEBUG logs in production, add a global threshold: 
+
+# Set minimum level to log 
+$Global:LogLevelThreshold = 'INFO'   # DEBUG < INFO < WARN < ERROR < FATAL 
+ 
+# Helper to map level to numeric priority 
+$Global:LogLevelOrder = @{ 
+    DEBUG = 10 
+    INFO  = 20 
+    WARN  = 30 
+    ERROR = 40 
+    FATAL = 50 
+} 
+
+Update Write-LogJson to check before writing: 
+
+    # At top of Write-LogJson, after parameters: 
+    $minLevelName = if ($Global:LogLevelThreshold) { $Global:LogLevelThreshold } else { 'DEBUG' } 
+    $order = $Global:LogLevelOrder 
+ 
+    if ($order[$Level] -lt $order[$minLevelName]) { 
+        return  # Do not log this entry 
+    } 
+
+Then you can configure in your script: 
+
+$Global:LogLevelThreshold = 'DEBUG'  # noisy during development 
+# or 
+$Global:LogLevelThreshold = 'INFO'   # quieter in production 
+
+ 
+
+7. Where to put this 
+
+For reuse across multiple scripts: 
+
+Create a module folder, e.g.: 
+C:\Users\<you>\Documents\WindowsPowerShell\Modules\JsonLogger\JsonLogger.psm1 
+
+Put Write-LogJson (and any helpers) in that .psm1. 
+
+In your scripts: 
+
+Import-Module JsonLogger 
+ 
+$Global:LogFilePath        = "C:\Logs\weather.log.jsonl" 
+$Global:LogLevelThreshold  = 'INFO' 
+ 
+Write-LogJson -Level INFO -Message "Script start" 
+
+ 
+
+If you share a small example of the data you most care about (e.g., weather script: request URL, response code, elapsed time), I can extend this logger with a recommended set of Data fields and a ready-made wrapper like Write-WeatherLog. 
